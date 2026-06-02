@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: facturacion
+
+  mvc:
+    async:
+      request-timeout: 60m
+
+  jpa:
+    show-sql: true
+
+  aot:
+    enabled: false
+
+  datasource:
+    url: ${MULTI_DB_MG_URL:jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=bogexavm1-devqa-scan.claro.co)(PORT=1525))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=SRV_GESTIONQA.bogexaqapri1.cesdevqavcn1.oraclevcn.com)(FAILOVER_MODE=(TYPE=select)(METHOD=basic))))}
+    username: ${MULTI_DB_MG_USERNAME:GESTIONNEW}
+    password: ${MULTI_DB_MG_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      data-source-properties:
+        oracle.jdbc.ReadTimeout: 3600000
+        oracle.net.CONNECT_TIMEOUT: 10000
+        oracle.jdbc.defaultRowPrefetch: 10000
+
+server:
+  port: 8080
+
+security:
+  jwt:
+    issuer: ${SECURITY_JWT_ISSUER:auth-service}
+    secret: ${JWT_SECRET:/o6+OuJvWy+qZTCQPVpFeOc1ZaXfTR0X7i1iS5Emo0M=}
