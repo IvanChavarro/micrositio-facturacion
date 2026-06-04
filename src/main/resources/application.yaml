@@ -8,6 +8,8 @@ spring:
 
   jpa:
     show-sql: true
+    hibernate:
+      ddl-auto: none
 
   aot:
     enabled: false
@@ -22,6 +24,19 @@ spring:
         oracle.jdbc.ReadTimeout: 3600000
         oracle.net.CONNECT_TIMEOUT: 10000
         oracle.jdbc.defaultRowPrefetch: 10000
+
+multi-db:
+  configs:
+    audit:
+      url: ${MULTI_DB_AUDIT_URL:jdbc:postgresql://localhost:9000/micrositio}
+      username: ${MULTI_DB_AUDIT_USERNAME:micrositioUser}
+      password: ${MULTI_DB_AUDIT_PASSWORD:micrositio}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+  audit:
+    enabled: ${MULTI_DB_AUDIT_ENABLED:true}
+    schema: ${MULTI_DB_AUDIT_SCHEMA:audit}
 
 server:
   port: 8080

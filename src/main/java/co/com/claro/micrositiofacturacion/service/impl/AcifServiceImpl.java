@@ -2,17 +2,25 @@ package co.com.claro.micrositiofacturacion.service.impl;
 
 import co.com.claro.micrositiofacturacion.dto.AcifBaseActasDTO;
 import co.com.claro.micrositiofacturacion.dto.AcifSerialesDTO;
+import co.com.claro.micrositiofacturacion.dto.PageResponseDTO;
 import co.com.claro.micrositiofacturacion.entity.AcifBaseActasEntity;
 import co.com.claro.micrositiofacturacion.entity.AcifSerialesEntity;
+import co.com.claro.micrositiofacturacion.entity.AuditLog;
 import co.com.claro.micrositiofacturacion.exception.AcifConversionException;
 import co.com.claro.micrositiofacturacion.exception.AcifResultNotFoundException;
 import co.com.claro.micrositiofacturacion.repository.AcifBaseActasRepo;
 import co.com.claro.micrositiofacturacion.repository.AcifSerialesRepo;
 import co.com.claro.micrositiofacturacion.service.AcifService;
+import co.com.claro.micrositiofacturacion.service.AuditLogService;
+import co.com.claro.micrositiofacturacion.util.CastUtil;
 import jakarta.persistence.Column;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
@@ -24,6 +32,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -32,40 +41,89 @@ public class AcifServiceImpl implements AcifService {
 
     private static final int CSV_WRITER_BUFFER_SIZE = 64 * 1024;
     private static final int CSV_FLUSH_INTERVAL = 1000;
+    private static final int DEFAULT_PAGE = 0;
+    private static final int DEFAULT_SIZE = 100;
+    private static final int MAX_SIZE = 500;
 
 
     private final AcifBaseActasRepo acifBaseActasRepo;
     private final AcifSerialesRepo acifSerialesRepo;
+    private final AuditLogService auditLogService;
 
     @Override
-    public List<AcifBaseActasDTO> findBaseActasByIdCargue(Long idCargueFk) {
+    public PageResponseDTO<AcifBaseActasDTO> findBaseActasByIdCargue(Long idCargueFk, Integer page, Integer size) {
         log.debug("Consultando actas ACIF para idCargueFk={}", idCargueFk);
-        List<AcifBaseActasEntity> results = acifBaseActasRepo.findByIdCargueFk(idCargueFk);
+        Pageable pageable = buildPageable(page, size, "idBaseActas");
+        Page<AcifBaseActasEntity> results = acifBaseActasRepo.findByIdCargueFk(idCargueFk, pageable);
 
-        if (results.isEmpty()) {
+        if (results.getTotalElements() == 0) {
             log.warn("No se encontraron actas ACIF para idCargueFk={}", idCargueFk);
             throw new AcifResultNotFoundException(idCargueFk);
         }
 
-        log.info("Se encontraron {} actas ACIF para idCargueFk={}", results.size(), idCargueFk);
-        return results.stream()
+        log.info("Se encontraron {} actas ACIF para idCargueFk={}", results.getTotalElements(), idCargueFk);
+        List<AcifBaseActasDTO> rows = results.getContent().stream()
                 .map(this::toDto).map(dto -> (AcifBaseActasDTO) dto)
                 .toList();
+        PageResponseDTO<AcifBaseActasDTO> response = buildPageResponse(results, rows);
+
+        auditLogService.saveAuditLog(AuditLog.builder()
+                .executionCommand("ejecutó consulta de actas ACIF")
+                .responseService(CastUtil.serializeAuditPayload(response))
+                .payload(CastUtil.serializeAuditPayload(buildAuditPayload(idCargueFk)))
+                .build());
+
+        return response;
     }
 
     @Override
-    public List<AcifSerialesDTO> findSerialesByIdCargue(Long idCargueFk) {
-        List<AcifSerialesEntity> results = acifSerialesRepo.findByIdCargueFk(idCargueFk);
+    public PageResponseDTO<AcifSerialesDTO> findSerialesByIdCargue(Long idCargueFk, Integer page, Integer size) {
+        Pageable pageable = buildPageable(page, size, "idSerial");
+        Page<AcifSerialesEntity> results = acifSerialesRepo.findByIdCargueFk(idCargueFk, pageable);
 
-        if (results.isEmpty()) {
+        if (results.getTotalElements() == 0) {
             log.warn("No se encontraron seriales ACIF para idCargueFk={}", idCargueFk);
             throw new AcifResultNotFoundException(idCargueFk);
         }
 
-        log.info("Se encontraron {} seriales ACIF para idCargueFk={}", results.size(), idCargueFk);
-        return results.stream()
+        log.info("Se encontraron {} seriales ACIF para idCargueFk={}", results.getTotalElements(), idCargueFk);
+        List<AcifSerialesDTO> rows = results.getContent().stream()
                 .map(this::toDto).map(dto -> (AcifSerialesDTO) dto)
                 .toList();
+        PageResponseDTO<AcifSerialesDTO> response = buildPageResponse(results, rows);
+
+        auditLogService.saveAuditLog(AuditLog.builder()
+                .executionCommand("ejecutó consulta de seriales ACIF")
+                .responseService(CastUtil.serializeAuditPayload(response))
+                .payload(CastUtil.serializeAuditPayload(buildAuditPayload(idCargueFk)))
+                .build());
+
+        return response;
+    }
+
+    private Pageable buildPageable(Integer page, Integer size, String sortProperty) {
+        int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
+        int normalizedSize = normalizeSize(size);
+        return PageRequest.of(normalizedPage, normalizedSize, Sort.by(Sort.Direction.ASC, sortProperty));
+    }
+
+    private int normalizeSize(Integer size) {
+        if (size == null || size <= 0) {
+            return DEFAULT_SIZE;
+        }
+        return Math.min(size, MAX_SIZE);
+    }
+
+    private <T, R> PageResponseDTO<R> buildPageResponse(Page<T> page, List<R> rows) {
+        return PageResponseDTO.<R>builder()
+                .totalRows(page.getTotalElements())
+                .page(page.getNumber())
+                .size(page.getSize())
+                .totalPages(page.getTotalPages())
+                .hasNext(page.hasNext())
+                .hasPrevious(page.hasPrevious())
+                .rows(rows)
+                .build();
     }
 
     @Override
@@ -76,6 +134,12 @@ public class AcifServiceImpl implements AcifService {
             log.warn("No se encontraron actas ACIF para exportar a CSV, idCargueFk={}", idCargueFk);
             throw new AcifResultNotFoundException(idCargueFk);
         }
+
+        auditLogService.saveAuditLog(AuditLog.builder()
+                .executionCommand("inició exportación de actas ACIF a CSV")
+                .responseService("Transmisión CSV iniciada")
+                .payload(CastUtil.serializeAuditPayload(buildAuditPayload(idCargueFk)))
+                .build());
 
         return generateCsv(results, idCargueFk, "actas");
     }
@@ -88,6 +152,12 @@ public class AcifServiceImpl implements AcifService {
             log.warn("No se encontraron seriales ACIF para exportar a CSV, idCargueFk={}", idCargueFk);
             throw new AcifResultNotFoundException(idCargueFk);
         }
+
+        auditLogService.saveAuditLog(AuditLog.builder()
+                .executionCommand("inició exportación de seriales ACIF a CSV")
+                .responseService("Transmisión CSV iniciada")
+                .payload(CastUtil.serializeAuditPayload(buildAuditPayload(idCargueFk)))
+                .build());
 
         return generateCsv(results, idCargueFk, "seriales");
     }
@@ -184,6 +254,10 @@ public class AcifServiceImpl implements AcifService {
             return "\"" + escaped + "\"";
         }
         return escaped;
+    }
+
+    private Map<String, Long> buildAuditPayload(Long idCargueFk) {
+        return Map.of("idCargueFk", idCargueFk);
     }
 
     private Object toDto(Object entity) {
